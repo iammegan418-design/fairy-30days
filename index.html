@@ -174,9 +174,27 @@ async function storageSetRaw(key, value){
   try{ localStorage.setItem(key, value); ok=true; }catch(e){}
   return ok;
 }
+/* 舊版 healthCheck 可能缺少 tiedWeakest／maxScore／focus／secondary／weakest 等新欄位，
+   這裡只補缺少的欄位，絕對不覆蓋或清除使用者原本已存在的資料（stage/primaryLabel/primaryBody等維持原樣）。 */
+function normalizeHealthCheck(hc){
+  if(!hc || typeof hc!=='object') return hc;
+  if(!Array.isArray(hc.weakest)) hc.weakest = Array.isArray(hc.focus) ? hc.focus.slice(0,3) : DIM_ORDER.slice(0,3);
+  if(!hc.scores || typeof hc.scores!=='object') hc.scores = {};
+  if(hc.maxScore===undefined || hc.maxScore===null){
+    const scoreValues = Object.values(hc.scores);
+    hc.maxScore = scoreValues.length ? Math.max(...scoreValues) : 0;
+  }
+  if(!Array.isArray(hc.tiedWeakest)){
+    hc.tiedWeakest = DIM_ORDER.filter(k => (hc.scores||{})[k] === hc.maxScore);
+  }
+  if(!Array.isArray(hc.secondary)) hc.secondary = hc.weakest.slice(1,3).map(d=>DIM_FOCUS_LABEL[d]).filter(Boolean);
+  if(!Array.isArray(hc.focus)) hc.focus = hc.weakest.map(d=>DIM_FOCUS_LABEL[d]).filter(Boolean);
+  return hc;
+}
 async function loadData(){
   const raw = await storageGetRaw(STORAGE_KEY);
   try{ state.partners = raw ? JSON.parse(raw) : []; }catch(e){ state.partners = []; }
+  state.partners.forEach(p=>{ if(p && p.healthCheck) normalizeHealthCheck(p.healthCheck); });
   const cid = await storageGetRaw('jerosse_current_id');
   state.currentId = cid || null;
   state.loaded = true;
@@ -189,11 +207,42 @@ async function saveCurrentId(id){
   state.currentId = id;
   await storageSetRaw('jerosse_current_id', id || '');
 }
+function normalizePositioning(pos){
+  if(!pos || typeof pos !== 'object') return pos;
+
+  if(!Array.isArray(pos.pillars)) pos.pillars = [];
+  if(!Array.isArray(pos.topics)) pos.topics = [];
+  if(!Array.isArray(pos.contentDirections)) pos.contentDirections = [];
+
+  if(!Array.isArray(pos.shareStyleLines)){
+    pos.shareStyleLines = [
+      '你不用刻意把自己變成老師，也不用每天講產品。',
+      '先從自己的生活、改變和實際經驗開始分享就好。'
+    ];
+  }
+
+  if(typeof pos.label !== 'string') pos.label = '真實生活分享型';
+  if(typeof pos.traitsLine !== 'string') pos.traitsLine = '真誠 × 努力';
+  if(typeof pos.expressionStyle !== 'string'){
+    pos.expressionStyle = '用你自己說話的方式分享就好，反而最真實。';
+  }
+
+  return pos;
+}
+function normalizePlanRecord(plan){
+  if(!plan || typeof plan !== 'object') return plan;
+  if(!Array.isArray(plan.weeks)) plan.weeks = [];
+  if(!Array.isArray(plan.flat)) plan.flat = [];
+  return plan;
+}
 function normalizePartnerRecord(p){
   if(!p) return p;
   if(!p.daily || typeof p.daily!=='object') p.daily = {};
   if(!Array.isArray(p.weeklyRetros)) p.weeklyRetros = [];
   if(!p.weekAdjustments || typeof p.weekAdjustments!=='object') p.weekAdjustments = {};
+  if(p.positioning) normalizePositioning(p.positioning);
+  if(p.healthCheck) normalizeHealthCheck(p.healthCheck);
+  if(p.plan) normalizePlanRecord(p.plan);
   return p;
 }
 function getPartner(id){ return normalizePartnerRecord(state.partners.find(p=>p.id===id)); }
@@ -207,7 +256,13 @@ function showToast(msg){
 }
 
 /* ===================== 日期工具 ===================== */
-function todayStr(){ return new Date().toISOString().slice(0,10); }
+function localDateStr(date = new Date()){
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+function todayStr(){ return localDateStr(); }
 function dayNumber(startDate){
   const s = new Date(startDate+'T00:00:00'); const t = new Date(todayStr()+'T00:00:00');
   const diff = Math.floor((t-s)/86400000)+1;
@@ -215,7 +270,7 @@ function dayNumber(startDate){
 }
 function dateOfDay(startDate, n){
   const s = new Date(startDate+'T00:00:00'); s.setDate(s.getDate()+(n-1));
-  return s.toISOString().slice(0,10);
+  return localDateStr(s);
 }
 function fmtDate(d){ const dt=new Date(d+'T00:00:00'); return `${dt.getMonth()+1}/${dt.getDate()}`; }
 function dayVisited(rec){
@@ -274,60 +329,74 @@ function computeWeakness(b){
   const scores = {};
   DIM_ORDER.forEach(k=>{ scores[k] = (WEAKNESS_SCORES[k]||{})[b[k]]; if(scores[k]===undefined) scores[k]=0; });
   const weakest = DIM_ORDER.slice().sort((a,c)=>scores[c]-scores[a]).slice(0,3);
-  return {scores, weakest};
+  const maxScore = Math.max(...Object.values(scores));
+  const tiedWeakest = DIM_ORDER.filter(k => scores[k] === maxScore);
+  return {scores, weakest, tiedWeakest, maxScore};
 }
 
-/* 根據最弱環節（優先取最弱的1項，必要時參考第2項）組成一段真正的診斷文字，而不是固定模板 */
-function composeDiagnosis(weakest, scores){
+/* 根據最弱環節組成一段診斷文字；如果有兩項以上同分並列最弱，不假裝只有唯一原因 */
+function composeDiagnosis(weakest, scores, tiedWeakest){
+  if(tiedWeakest && tiedWeakest.length>=2){
+    const labels = tiedWeakest.map(k=>DIM_FOCUS_LABEL[k]);
+    return `從你目前的回答看，現在比較明顯的卡點不只一個，「${labels.join('」和「')}」目前同時偏弱，可以先從這幾個地方一起觀察看看。`;
+  }
   const top = weakest[0];
   if(top==='closing' && (weakest.includes('exposure') || weakest.includes('content'))){
-    return '你現在不是成交能力不好，而是前端曝光與內容還沒有穩定，所以還沒有足夠的新客人進來。現在不用急著學更多成交技巧，先把曝光與內容節奏建立起來。';
+    return '從你目前的回答看，可能不是成交能力不好，而是前端曝光與內容還沒有穩定，新客人進來的機會也會跟著變少。目前比較值得先觀察的，是曝光與內容的節奏。';
   }
   const map = {
-    exposure: '你現在最容易卡住的，是分享的次數還不夠多，所以新的機會還沒有進來。現在不用急著學技巧，先把「持續出現」這件事做穩就好。',
-    positioning: '你現在不是不夠努力，而是別人還看不清楚你是誰、平常在分享什麼。先把方向理清楚，接下來要發什麼會變得容易很多。',
-    content: '你現在最容易卡住的，是不知道每天要發什麼，導致經營常常斷斷續續。先建立幾個固定的內容方向，分享會變得輕鬆很多。',
-    inquiry: '你已經有曝光跟內容了，只是還沒有足夠的信任讓人願意主動開口問你。可以多分享真實故事和心得，慢慢累積信任感。',
-    closing: '你已經有一定的曝光與詢問，只差在怎麼把對話往成交推進。可以練習更直接、但不會有壓力的邀請方式。',
-    followUp: '你的曝光與成交都還不錯，比較容易被忽略的是舊客戶的回訪與關係經營。這部分只要建立一個簡單的習慣，就會慢慢看到差異。'
+    exposure: '從你目前的回答看，曝光頻率是比較明顯的弱項之一。曝光偏少時，新機會通常也會跟著變少，這會是目前值得先觀察的地方。',
+    positioning: '從目前的回答看，你可能不是缺少行動，而是定位還沒有完全清楚。當別人不容易快速理解你在分享什麼時，內容與互動通常也會變得比較吃力。',
+    content: '從你目前的回答看，內容方向還不太固定，可能是目前經營容易斷斷續續的原因之一。先建立幾個固定方向，分享起來可能會比較輕鬆。',
+    inquiry: '從你目前的回答看，曝光跟內容都已經有基礎，比較值得注意的是信任感的累積，這可能會影響到主動詢問的意願。',
+    closing: '從你目前的回答看，曝光與詢問都已經有一定基礎，比較值得觀察的是怎麼把對話往成交推進，這部分可以練習更直接、但不會有壓力的邀請方式。',
+    followUp: '從你目前的回答看，曝光與成交都還不錯，比較容易被忽略的可能是舊客戶的回訪與關係經營，這部分建立一個簡單的習慣，通常會慢慢看到差異。'
   };
-  return map[top] || '你目前的經營還在慢慢累積，不用急，先把最容易卡住的地方一項一項處理就好。';
+  return map[top] || '你目前的經營還在慢慢累積，不用急，可以先從比較容易卡住的地方一項一項觀察看看。';
 }
 
-function composePrimaryDiagnosis(m, weakest, scores, timeLevel){
+function composePrimaryDiagnosis(m, weakest, scores, timeLevel, tiedWeakest){
   const timeLimited = timeLevel<=1;
   const inCrisis = m.feeling==='有點想放棄' || m.feeling==='不知道自己在忙什麼' || m.feeling==='很挫折';
   const noFeedback = weakest.slice(0,2).some(d=>d==='inquiry'||d==='exposure');
   const noDirection = weakest.slice(0,2).some(d=>d==='content'||d==='positioning');
   const cantOpen = (m.blockers||[]).includes('不敢開口分享') || (m.blockers||[]).includes('不會跟進客人') || weakest.slice(0,2).includes('closing');
 
+  if(tiedWeakest && tiedWeakest.length>=2 && !inCrisis){
+    const labels = tiedWeakest.map(k=>DIM_FOCUS_LABEL[k]);
+    return {
+      label: '目前比較明顯的卡點不只一個。',
+      body: `從你目前的回答看，「${labels.join('」和「')}」目前同時偏弱，可能是同時影響你經營節奏的地方。不用急著一次全部處理，可以先從其中一個開始觀察看看。`
+    };
+  }
+
   if(inCrisis || weakest[0]==='exposure'){
     const reasons = [];
     if(timeLimited) reasons.push('現在能投入的時間有限');
     if(noFeedback) reasons.push('一段時間沒有得到詢問或回饋');
     let body = reasons.length
-      ? `你不是不夠努力，而是${reasons.join('，加上')}，久了會開始不知道每天到底該做什麼`
-      : '你不是不夠努力，而是這段時間的節奏被打斷了';
-    if(noDirection) body += '，也不太確定要分享什麼';
-    if(cantOpen) body += '，也越來越不想主動開口';
-    body += '。現在不用一次解決所有問題，我們先重新建立一個你做得到、也能持續的經營節奏。';
-    return {label:'經營節奏斷掉了。', body};
+      ? `從你目前的回答看，可能是${reasons.join('，加上')}，這些疊在一起，久了容易讓人不太確定每天該做什麼`
+      : '從你目前的回答看，這段時間的節奏可能被打斷了';
+    if(noDirection) body += '，也可能不太確定要分享什麼';
+    if(cantOpen) body += '，也可能比較不想主動開口';
+    body += '。這些都只是目前看起來比較可能的原因，不用一次解決所有問題，可以先重新建立一個做得到、也能持續的經營節奏。';
+    return {label:'經營節奏可能被打斷了。', body};
   }
   if(noDirection){
-    return {label:'方向還沒有定下來。', body:'你不是沒有內容，而是還沒有一個清楚、可以一直分享下去的方向，所以每次要發文都要重新想。先把方向定下來，之後會輕鬆很多。'};
+    return {label:'方向可能還沒有完全定下來。', body:'從目前的回答看，你不是沒有內容，而是可能還沒有一個清楚、可以一直分享下去的方向，所以每次要發文都要重新想。先把方向定下來，之後可能會輕鬆一些。'};
   }
   if(cantOpen){
-    return {label:'互動與跟進還沒有形成習慣。', body:'你已經有基礎，只是還沒有養成主動關心、跟進的習慣，機會常常因此被錯過。這部分只要建立一個簡單的節奏，就會慢慢看到改變。'};
+    return {label:'互動與跟進可能還沒有形成習慣。', body:'從目前的回答看，你已經有基礎，比較可能的是還沒有養成主動關心、跟進的習慣，機會可能因此被錯過。這部分建立一個簡單的節奏，通常會慢慢看到改變。'};
   }
-  return {label:'整體還算穩定，但有幾個地方可以再加強。', body:'你目前的經營已經有一定基礎，接下來把幾個比較弱的環節慢慢補起來，就會更完整。'};
+  return {label:'整體看起來還算穩定，有幾個地方可以再加強。', body:'從目前的回答看，你的經營已經有一定基礎，接下來把幾個比較弱的環節慢慢補起來，可能會更完整。'};
 }
 
 function computeHealthCheck(m, b, dailyTime){
-  const {scores, weakest} = computeWeakness(b);
+  const {scores, weakest, tiedWeakest, maxScore} = computeWeakness(b);
   const timeLevel = Math.max(0, TIME_LEVELS.indexOf(dailyTime));
   let stage;
-  // 第一層：心理狀態或曝光幾乎為零 → 先重啟，不直接跳去教技巧
-  if(m.feeling==='不知道自己在忙什麼' || m.feeling==='有點想放棄' || scores.exposure>=3){
+  // 經營階段只依 STEP3 六個客觀經營面向判斷，不受「今天心情」影響；心情只影響今天任務份量與語氣（見 MOOD_TIERS）
+  if(scores.exposure>=3){
     stage='重啟期';
   }
   // 六項都很強、沒有真正弱項 → 穩定期
@@ -349,7 +418,7 @@ function computeHealthCheck(m, b, dailyTime){
     secondary = ['加強老客戶的關係與回購','建立可以持續複製的節奏'];
     focus = ['把有效的做法固定下來','加強老客戶的關係與回購','建立可以持續複製的節奏'];
   } else {
-    primary = composePrimaryDiagnosis(m, weakest, scores, timeLevel);
+    primary = composePrimaryDiagnosis(m, weakest, scores, timeLevel, tiedWeakest);
     secondary = weakest.slice(1,3).map(d=>DIM_FOCUS_LABEL[d]);
     focus = weakest.map(d=>DIM_FOCUS_LABEL[d]);
   }
@@ -359,7 +428,7 @@ function computeHealthCheck(m, b, dailyTime){
     why: info.why,
     primaryLabel: primary.label, primaryBody: primary.body,
     blocker: primary.body,
-    secondary, focus, weakest, scores,
+    secondary, focus, weakest, scores, tiedWeakest, maxScore,
     checkedDate: todayStr()
   };
 }
@@ -538,18 +607,21 @@ function isLowSignalEvent(text){
 }
 
 function buildAssistantContext(p, event){
-  const pos = p.positioning;
+  const pos = p.positioning || {};
   const lifeRole = p.profile.lifeRole || '';
   const job = p.profile.job || '';
   const sharingTags = resolveOthers((p.step5&&p.step5.sharing)||[], p.step5&&p.step5.sharingOther);
   const audienceList = resolveOthers((p.step5&&p.step5.audience)||[], p.step5&&p.step5.audienceOther);
   const traits = resolveOthers((p.step5&&p.step5.traits)||[], p.step5&&p.step5.traitsOther);
+  const pillars = (Array.isArray(pos.pillars) && pos.pillars.length)
+    ? pos.pillars
+    : [{name:'你的生活日常', line:'先從身邊發生的小事開始分享就好。', examples:['分享今天發生的一件小事']}];
   return {
     event: (event||'').trim(),
     audience: pos.audience,
     audienceList,
-    pillars: pos.pillars,
-    topics: pos.topics,
+    pillars,
+    topics: Array.isArray(pos.topics) ? pos.topics : [],
     stage: p.healthCheck ? p.healthCheck.stage : '未健檢',
     weakest: (p.healthCheck && p.healthCheck.weakest||[])[0] || null,
     need: (p.step2 && p.step2.need) || '',
@@ -2167,12 +2239,17 @@ function generate30DayPlan(p){
 }
 
 /* ===================== 路由 ===================== */
-function myPartner(){ return normalizePartnerRecord(state.partners[0] || null); }
+function myPartner(){ return currentPartner() || normalizePartnerRecord(state.partners[0] || null); }
 
 window.addEventListener('hashchange', render);
 window.addEventListener('DOMContentLoaded', async ()=>{
   await loadData();
   wizardDraftRaw = await storageGetRaw('jerosse_wizard_draft');
+  // 回訪續接：currentId 對應的資料如果已經不存在，但 partners 還有其他資料，
+  // 用第一筆有效資料當作目前使用者，並把修正後的 currentId 重新存回去，不視為新使用者
+  if(state.currentId && !getPartner(state.currentId) && state.partners.length){
+    await saveCurrentId(state.partners[0].id);
+  }
   if(!location.hash){
     const p = myPartner();
     location.hash = (p && p.plan) ? `#/partner/${p.id}/today` : '#/welcome';
@@ -2349,6 +2426,9 @@ function normalizeWizardData(d){
   if(typeof d.step5.audience === 'string'){
     d.step5.audience = d.step5.audience ? [d.step5.audience] : [];
   }
+  if(d.healthCheck) normalizeHealthCheck(d.healthCheck);
+  if(d.positioning) normalizePositioning(d.positioning);
+  if(d.plan) normalizePlanRecord(d.plan);
   return d;
 }
 function viewWizard(editId){
@@ -2513,7 +2593,7 @@ const NEED_TARGET_LAYER = {
   // 找回經營動力／建立穩定經營習慣 沒有對應特定環節，不觸發排序提醒
 };
 function stepResult(d){
-  const hc = d.healthCheck;
+  const hc = d.healthCheck || {emoji:'🌱', stage:'建立期', why:'', primaryLabel:'', primaryBody:'', secondary:[], focus:[], weakest:[]};
   const needLabel = NEED_DISPLAY_LABEL[d.step2.need] || d.step2.need || '找到適合你的下一步';
   const needAction = NEED_FOCUS_ACTION[d.step2.need] || needLabel;
   const targetLayer = NEED_TARGET_LAYER[d.step2.need];
@@ -2570,6 +2650,7 @@ function stepProfile(d){
   const s5 = d.step5;
   if(d.positioning){
     const pos = d.positioning;
+    const pillars = Array.isArray(pos.pillars) ? pos.pillars : [];
     return `
     <div class="hero-card">
       <div class="hero-eyebrow">STEP 5 · 你的定位結果</div>
@@ -2578,11 +2659,11 @@ function stepProfile(d){
     </div>
     <div class="card">
       <div class="section-label">① 我的經營定位</div>
-      <p style="font-size:14.5px; line-height:1.8;">${pos.summary}</p>
+      <p style="font-size:14.5px; line-height:1.8;">${pos.summary || pos.label || ''}</p>
     </div>
     <div class="card">
       <div class="section-label">② 我的 3 大內容方向</div>
-      ${pos.pillars.map(pl=>`
+      ${pillars.map(pl=>`
         <div style="margin-bottom:12px;">
           <span class="pill pill-pink">${pl.name}</span>
           <p style="font-size:12.5px; color:var(--gray); margin-top:4px; line-height:1.6;">${pl.line}</p>
@@ -2647,9 +2728,12 @@ function stepProfile(d){
 
 /* ---------- STEP 6｜你的專屬 30 天經營導航 ---------- */
 function stepPositioning(d){
-  const pos = d.positioning;
-  const plan = d.plan;
-  const hc = d.healthCheck;
+  const pos = d.positioning || {};
+  const plan = d.plan || {};
+  const hc = d.healthCheck || {emoji:'🌱', stage:'建立期', why:''};
+  const shareStyleLines = Array.isArray(pos.shareStyleLines) ? pos.shareStyleLines : [];
+  const pillars = Array.isArray(pos.pillars) ? pos.pillars : [];
+  const weeks = Array.isArray(plan.weeks) ? plan.weeks : [];
   return `
   <div class="hero-card">
     <div class="hero-eyebrow">${hc.emoji} ${hc.stage}</div>
@@ -2660,11 +2744,11 @@ function stepPositioning(d){
     <div class="section-label">① 最適合你的經營方式</div>
     <p style="font-size:13px; font-weight:700; color:var(--pink); margin-bottom:8px;">${pos.label}</p>
     <p style="font-size:13.5px; line-height:1.7; color:var(--medium); margin-bottom:10px;">個人特質：${pos.traitsLine}</p>
-    ${pos.shareStyleLines.map(t=>`<p style="font-size:14px; line-height:1.8; margin-bottom:6px;">${t}</p>`).join('')}
+    ${shareStyleLines.map(t=>`<p style="font-size:14px; line-height:1.8; margin-bottom:6px;">${t}</p>`).join('')}
   </div>
   <div class="card">
     <div class="section-label">② 你的 3 個內容方向</div>
-    ${pos.pillars.map(p=>`
+    ${pillars.map(p=>`
       <div style="margin-bottom:12px;">
         <span class="pill pill-pink">${p.name}</span>
         <p style="font-size:12.5px; color:var(--gray); margin-top:4px; line-height:1.6;">${p.line}</p>
@@ -2689,7 +2773,7 @@ function stepPositioning(d){
   </div>
   <div class="card">
     <div class="section-label">⑤ 你的 30 天方向</div>
-    ${plan.weeks.map(w=>`
+    ${weeks.map(w=>`
       <div style="padding:10px 0; border-bottom:1px solid #F3EFE9;">
         <span class="pill pill-blue">第 ${w.no} 週｜${w.title}</span>
         <p style="font-size:13px; color:var(--medium); margin-top:6px; line-height:1.6;">${w.intro}</p>
@@ -2802,7 +2886,16 @@ function wizardBuildPlan(){
 async function wizardFinish(){
   const d = wizard.data;
   const existingIdx = state.partners.findIndex(p=>p.id===d.id);
-  if(existingIdx>=0) state.partners[existingIdx] = d; else state.partners.push(d);
+  if(existingIdx>=0){
+    // 保留現有的每日紀錄／週回顧／週調整，避免編輯期間累積的最新紀錄被舊的精靈草稿覆蓋掉
+    const existing = state.partners[existingIdx];
+    d.daily = (existing.daily && typeof existing.daily==='object') ? existing.daily : (d.daily||{});
+    d.weeklyRetros = Array.isArray(existing.weeklyRetros) ? existing.weeklyRetros : (d.weeklyRetros||[]);
+    d.weekAdjustments = (existing.weekAdjustments && typeof existing.weekAdjustments==='object') ? existing.weekAdjustments : (d.weekAdjustments||{});
+    state.partners[existingIdx] = d;
+  } else {
+    state.partners.push(d);
+  }
   await saveData();
   await saveCurrentId(d.id);
   wizard = {step:1, data:null, _editId:null};
@@ -3033,14 +3126,14 @@ function getRecentMoodTrend(p, date){
   for(let i=1;i<=3;i++){
     const dt = new Date(date+'T00:00:00'); dt.setDate(dt.getDate()-i);
     if(dt < new Date(p.startDate+'T00:00:00')) break;
-    const key = dt.toISOString().slice(0,10);
+    const key = localDateStr(dt);
     const rec = p.daily[key];
     const isLow = !rec || !dayVisited(rec) || rec.mindsetCheckin==='😔';
     if(isLow) lowStreak++; else break;
   }
   if(lowStreak>=2) return 'light';
   const y = new Date(date+'T00:00:00'); y.setDate(y.getDate()-1);
-  const yRec = p.daily[y.toISOString().slice(0,10)];
+  const yRec = p.daily[localDateStr(y)];
   if(yRec && yRec.mindsetCheckin==='😔') return 'light';
   if(yRec && (yRec.mindsetCheckin==='😄'||yRec.mindsetCheckin==='🔥')) return 'plus';
   return 'normal';
@@ -3454,25 +3547,34 @@ function showProductQAMode(pid){
   </div>`;
 }
 function runAssistant(pid){
-  const p = getPartner(pid);
-  const ta = document.getElementById('assistantInput');
-  const text = ta ? ta.value.trim() : '';
-  if(!text){ showToast('先簡單寫下今天發生的事，或點選下面的快速選項'); return; }
-  assistantPendingEvent = text;
-  if(isDay1(p)){
-    runContentAssistant(pid, text);
-    return;
-  }
-  const items = splitEventItems(text);
-  if(items.length>1){
-    const result = generateMultiMaterialResult(p, items);
-    document.getElementById('assistantResult').innerHTML = renderMultiMaterialResult(result);
-    return;
-  }
-  if(isLowSignalEvent(text)){
-    document.getElementById('assistantResult').innerHTML = renderFollowUpPrompt();
-  } else {
-    runContentAssistant(pid, text);
+  console.log('[Assistant] start');
+  try{
+    const p = getPartner(pid);
+    const ta = document.getElementById('assistantInput');
+    const text = ta ? ta.value.trim() : '';
+    if(!text){ showToast('先簡單寫下今天發生的事，或點選下面的快速選項'); return; }
+    assistantPendingEvent = text;
+    if(isDay1(p)){
+      runContentAssistant(pid, text);
+      return;
+    }
+    const items = splitEventItems(text);
+    if(items.length>1){
+      const result = generateMultiMaterialResult(p, items);
+      console.log('[Assistant] result', result);
+      console.log('[Assistant] render');
+      document.getElementById('assistantResult').innerHTML = renderMultiMaterialResult(result);
+      return;
+    }
+    if(isLowSignalEvent(text)){
+      console.log('[Assistant] render');
+      document.getElementById('assistantResult').innerHTML = renderFollowUpPrompt();
+    } else {
+      runContentAssistant(pid, text);
+    }
+  }catch(err){
+    console.error('[Assistant ERROR]', err);
+    alert('內容助手發生錯誤：' + err.message);
   }
 }
 function renderFollowUpPrompt(){
@@ -3563,9 +3665,9 @@ function tabCheckin(p){
   const keys = Object.keys(p.daily).sort().reverse();
   return `
   <div class="card">
-    <div class="section-label">我的經營旅程</div>
+    <div class="section-label">30 天進度</div>
     <div class="progress-track"><div class="progress-fill" style="width:${pct}%;"></div></div>
-    <p class="small-note" style="margin-top:8px;">目前走到第 ${dn} 天，這是屬於你自己的節奏。</p>
+    <p class="small-note" style="margin-top:8px;">已經陪自己走過第 ${dn} 天／30 天，這是屬於你自己的節奏，不代表每天的任務都做完了。</p>
   </div>
   <div class="card">
     <div class="section-label">我的紀錄</div>
