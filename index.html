@@ -2240,14 +2240,20 @@ function generate30DayPlan(p){
 
 /* ===================== 路由 ===================== */
 function myPartner(){ return currentPartner() || normalizePartnerRecord(state.partners[0] || null); }
+/* 個人化稱呼：現有欄位是 nickname（不是 name），姓名不存在／空白／舊資料沒有這個欄位時，一律 fallback 成「夥伴」 */
+function partnerDisplayName(p){
+  return p && typeof p.nickname === 'string' && p.nickname.trim()
+    ? p.nickname.trim()
+    : '夥伴';
+}
 
 window.addEventListener('hashchange', render);
 window.addEventListener('DOMContentLoaded', async ()=>{
   await loadData();
   wizardDraftRaw = await storageGetRaw('jerosse_wizard_draft');
-  // 回訪續接：currentId 對應的資料如果已經不存在，但 partners 還有其他資料，
+  // 回訪續接：currentId 是空的、或指向已經不存在的資料，但 partners 還有其他資料，
   // 用第一筆有效資料當作目前使用者，並把修正後的 currentId 重新存回去，不視為新使用者
-  if(state.currentId && !getPartner(state.currentId) && state.partners.length){
+  if(state.partners.length && (!state.currentId || !getPartner(state.currentId))){
     await saveCurrentId(state.partners[0].id);
   }
   if(!location.hash){
@@ -2276,6 +2282,15 @@ function route(){
 function render(){
   if(!state.loaded){ document.getElementById('app').innerHTML = loadingScreen(); return; }
   const {name, parts} = route();
+  // 已完成設定的回訪使用者，即使網址停在 #/welcome（例如瀏覽器記住上次的網址、或書籤），
+  // 也要自動導向自己的 today 頁面，不能再看到「第一次使用」的入口頁
+  if(name==='welcome'){
+    const p = myPartner();
+    if(p && p.plan){
+      location.hash = `#/partner/${p.id}/today`;
+      return;
+    }
+  }
   let html = '';
   switch(name){
     case 'welcome': html = viewWelcome(); break;
@@ -3303,15 +3318,16 @@ function tabToday(p){
     ? '重新開始的第 1 天 🤍　不需要每天完美，願意回來就很好。'
     : dailyMindsetLine(stage, dn);
 
+  const displayName = partnerDisplayName(p);
   return `
   ${showWelcomeBack?`
   <div class="card" style="background:var(--light-sage);">
-    <p style="font-size:14.5px; font-weight:700; color:#4d6a4e; line-height:1.7;">歡迎回來 🤍</p>
+    <p style="font-size:14.5px; font-weight:700; color:#4d6a4e; line-height:1.7;">${displayName}，歡迎回來 🤍</p>
     <p style="font-size:13.5px; color:#5c7a5d; margin-top:4px; line-height:1.7;">我們從今天繼續就好。</p>
   </div>`:''}
 
   <div class="hero-card">
-    <div class="hero-eyebrow">第 ${dn} 天${planDay?` · 第${planDay.week}週｜${planDay.weekTitle}`:''}</div>
+    <div class="hero-eyebrow">${displayName}的第 ${dn} 天${planDay?` · 第${planDay.week}週｜${planDay.weekTitle}`:''}</div>
     <div class="hero-title">${heroLine}</div>
     ${trendNote?`<div class="hero-desc">${trendNote}</div>`:''}
   </div>
