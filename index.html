@@ -589,9 +589,9 @@ function classifyEventCategory(text){
   if(has(['叫了','訂了','買了','下單','訂購','購買','要了'])) return 'order';
   if(has(['累','emo','沒動力','低潮','煩','難過','開心','感動','想放棄'])) return 'emotion';
   if(has(['小孩','孩子','接送','上課','育兒','餵奶','親子','小朋友'])) return 'family';
-  if(has(['上班','主管','同事','會議','加班','老闆','公司','客戶會議'])) return 'work';
+  if(has(['上班','主管','同事','會議','開會','加班','老闆','公司','客戶'])) return 'work';
   if(has(['客人問','有人問','私訊','留言問','詢問我','問我'])) return 'customer';
-  if(has(['產品','使用','擦','敷','效果','心得','體驗'])) return 'product';
+  if(has(['產品','保養品','化妝品','使用','擦','敷','效果','心得','體驗'])) return 'product';
   if(has(['學到','學習','上課程','看書','成長','領悟'])) return 'growth';
   if(has(['發文','分享','經營','限動','貼文','曝光'])) return 'business_log';
   return 'daily';
@@ -795,7 +795,7 @@ function hasKnowledgeSignal(event, category){
   if(category==='family' || category==='emotion') return false;
   return /技巧|方法|流程|訣竅|小撇步|順序/.test(event||'');
 }
-function stripLeader(event){ return (event||'').replace(/^今天/,'').replace(/^剛剛|^剛才/,'').replace(/^有/,'').trim() || event; }
+function stripLeader(event){ return (event||'').replace(/^今天/,'').replace(/^剛剛|^剛才/,'').replace(/^有(?!人)/,'').trim() || event; }
 /* 判斷是不是只有「交易事實」而沒有任何體驗／情境細節（例如「有人跟我買產品」只是事實，沒有感受、原因、是否回購等資訊） */
 function hasStoryDetail(event){
   return /很好|很棒|說|回購|又來|終於|感覺|覺得|效果|改善|變好|開心|感動|信任|喜歡|滿意|第一次|之前|再買|再訂|主動|聊到|聊天/.test(event||'');
@@ -810,36 +810,6 @@ function buildNeutralTransactionVariants(event, restItems){
 }
 
 /* ===================== 直接產生「3個分享角度」，取代原本的三按鈕選角度流程 ===================== */
-const TRAIT_VOICE = {
-  '幽默':'humor', '很會聊天':'humor', '有行動力':'direct',
-  '溫柔':'gentle', '很會照顧人':'gentle', '親切':'gentle',
-  '直率':'direct', '專業':'pro', '真實、不做作':'plain'
-};
-function primaryVoice(traits){
-  for(const t of (traits||[])){ if(TRAIT_VOICE[t]) return TRAIT_VOICE[t]; }
-  return 'plain';
-}
-const VOICE_LIFE_CLOSER = {
-  humor:'有時候快樂真的不用太複雜 😂', gentle:'這種小小的片刻，也是在照顧自己 🤍',
-  direct:'就這樣，很簡單。', pro:'簡單的日常，也值得被記錄下來。',
-  plain:'平凡的一天，但也是今天的一部分。'
-};
-const VOICE_RESONANCE_OPEN = {
-  humor:'有人跟我一樣嗎🤣', gentle:'不知道你們會不會這樣，',
-  direct:'說真的，', pro:'發現一個蠻多人會有的狀況，', plain:'不知道你們會不會這樣，'
-};
-const VOICE_PERSONAL_OPEN = {
-  humor:'我發現我自己欸，', gentle:'最近慢慢發現，',
-  direct:'老實說，', pro:'最近有一個小小的觀察，', plain:'最近發現，'
-};
-
-function identityLeadIn(category, ctx){
-  if(category==='family') return '';
-  if(ctx.hasFamilyIdentity) return '忙了一天，';
-  if(ctx.hasWorkIdentity) return '下班後，';
-  if(ctx.sharingTags && ctx.sharingTags.includes('健康管理')) return '最近比較在意這件事，';
-  return '';
-}
 function judgeProductAdvice(event, category){
   if(TRANSACTIONAL_CATEGORIES.includes(category) || hasProductSignal(event)){
     return {level:'natural', text:'這則很適合自然帶到，不用刻意介紹功效，用聊天的口吻說就好。'};
@@ -858,61 +828,52 @@ function classifyMaterialType(event){
   if(/以前.{0,12}(不敢|沒有|不會|很少|不太)|現在.{0,12}(終於|開始|會|已經|敢)/.test(event||'')) return 'story';
   return 'daily';
 }
-const MATERIAL_ANGLE_POOL = {
-  daily: ['daily','humor','resonance','qa','discovery','diary'],
-  emotion: ['feeling','resonance','daily'],
-  story: ['story','opinion','resonance','daily'],
-  product: ['experience','qa','daily'],
-  work: ['daily','humor','diary','experience','qa'],
-  family: ['daily','humor','discovery','qa','resonance']
-};
-const REACTION_SETS = {
-  humor:['😂','哈哈哈','笑死','真的笑死'], gentle:['🤍','還不錯','蠻喜歡的','覺得剛好'],
-  direct:['還可以','不錯','可以','還行'], pro:['還不錯','算不錯','蠻好的','可以'],
-  plain:['還不錯','還可以','蠻好的','可以']
-};
 let regenPass = 0;
-function reactionFor(voice){ const set = REACTION_SETS[voice]||REACTION_SETS.plain; return set[regenPass % set.length]; }
-const ANGLE_DEFS = {
-  daily: {label:'就發日常', compose:(core,voice)=> `${core} ${reactionFor(voice)}`},
-  humor: {label:'幽默一點', compose:(core)=> `${core} 哈哈哈哈`},
-  resonance: {label:'想讓人回你', compose:(core)=> `${core}\n\n你們也會這樣嗎？`},
-  qa: {label:'問問大家', compose:(core)=> `${core}\n\n你們通常都是怎麼做的？`},
-  discovery: {label:'小發現', compose:(core)=> `${core}\n\n真的滿${reactionFor('gentle')}`},
-  diary: {label:'單純紀錄', compose:(core)=> `${core}`},
-  feeling: {label:'說說心情', compose:(core)=> `${core}。\n今天就是這樣的一天。`},
-  story: {label:'說個小故事', compose:(core)=> `${core}`},
-  opinion: {label:'加一點想法', compose:(core)=> `${core}\n\n這樣的轉變，自己都覺得不可思議。`},
-  experience: {label:'分享心得', compose:(core)=> `${core}，這是我自己的心得。`}
-};
+/* ===================== 內容助手的產品原則 =====================
+   內容助手的目的不是取代使用者寫內容，而是示範如何把真實生活轉成內容，
+   讓使用者逐漸學會自己找到分享角度。3個結果必須是「不同分享目的」，不是同一句換結尾；
+   沒說過的感受、故事、人物反應、產品效果，一律不能自己補上。 */
 let usedAngleKeys = new Set();
-function pickThreeAngleKeys(event){
-  const pool0 = MATERIAL_ANGLE_POOL[classifyMaterialType(event)] || MATERIAL_ANGLE_POOL.daily;
-  let pool = pool0.filter(k=>!usedAngleKeys.has(k));
-  if(pool.length<3){ usedAngleKeys.clear(); pool = pool0; }
-  const shuffled = pool.slice().sort(()=>Math.random()-0.5);
-  const picked = shuffled.slice(0, Math.min(3, pool0.length));
-  picked.forEach(k=>usedAngleKeys.add(k));
-  return picked;
-}
+function pickThreeAngleKeys(event){ return ['natural','interactive','reangle']; }
 function composeAngleSet(event, ctx, keys){
   const category = classifyEventCategory(event);
-  const voice = primaryVoice(ctx.traits);
   const core = stripLeader(event);
+  const analysis = analyzeContentCore(event);
+  const signal = analysis.transitionWord || analysis.emotionWord;
   const productAdv = judgeProductAdvice(event, category);
   const scene = CATEGORY_SCENE[category] || CATEGORY_SCENE.daily;
-  return keys.map(k=>{
-    const def = ANGLE_DEFS[k];
-    const text = def.compose(core, voice);
-    const isQ = (k==='qa' || k==='resonance');
-    return {
-      key:k, label:def.label, text,
-      format: isQ ? '限時動態或貼文' : '限時動態',
-      scene,
-      interaction: isQ ? {level:'question', text:'可以留言區引導大家回覆。'} : {level:'none', text:'今天不用互動，單純分享就好。'},
-      product: productAdv
-    };
-  });
+  const q = topicQuestion(core);
+  const p3 = n => regenPass % n;
+
+  // ①最自然：單純的生活紀錄，事件本身+已知的訊號詞（如果有），不額外加感受
+  const naturalPool = signal
+    ? [`${core.includes(signal)?core:core+'，'+signal} 🤍`, `${core.includes(signal)?core:core+'，'+signal}。\n先記一下。`, `今天的行程：${core.includes(signal)?core:core+'，'+signal}`]
+    : [`${core} 🤍`, `今天的行程：${core}`, `${core}。\n先記一下。`];
+  const naturalText = naturalPool[p3(naturalPool.length)];
+  const naturalWhy = signal
+    ? `妳自己寫了「${signal}」，這已經是很好的重點，不用再加別的，直接記錄反而最自然。`
+    : `這是一件生活小事，沒有特別的情緒或故事，不用硬加大道理，直接記錄反而最自然。`;
+
+  // ②想讓人回妳：問題要跟事件本身有關，不是隨便的「你們也會這樣嗎」
+  const interactivePool = [`${core}\n${q}`, `${core}。\n${q}`, `分享一下：${core}\n${q}`];
+  const interactiveText = interactivePool[p3(interactivePool.length)];
+  const interactiveWhy = `想增加互動時，從這件事本身找一個別人也容易回答的問題，不需要突然問很大的問題。`;
+
+  // ③換一個角度：有訊號詞就放大它（個人感受角度）；沒有就用「小小紀錄」框架換個講法，兩者都不新增事實
+  const signalCore = signal ? (core.includes(signal) ? core : core+'，'+signal) : core;
+  const reanglePool = signal
+    ? [`${signalCore}\n這個我想記一下。`, `${signalCore}\n這個值得留下來。`, `說起來，${signalCore}`]
+    : [`今天做的一件小事：${core}。`, `${core}，也是今天的一部分。`, `小小紀錄：${core}`];
+  const reangleText = reanglePool[p3(reanglePool.length)];
+  const reangleWhy = signal
+    ? `妳寫的「${signal}」是這件事裡最有感的地方，換一個角度把它放在前面或特別提出來，讀起來會不一樣。`
+    : `同一件事換一個講法，讀起來也會有點不一樣，不用每次都寫成問句或加emoji。`;
+
+  return [
+    {key:'natural', label:'最自然', text:naturalText, why:naturalWhy, format:'限時動態', scene, interaction:{level:'none', text:'今天不用互動，單純分享就好。'}, product:productAdv},
+    {key:'interactive', label:'想讓人回妳', text:interactiveText, why:interactiveWhy, format:'限時動態或貼文', scene, interaction:{level:'question', text:'可以留言區引導大家回覆。'}, product:productAdv},
+    {key:'reangle', label:'換一個角度', text:reangleText, why:reangleWhy, format:'限時動態', scene, interaction:{level:'none', text:'今天不用互動，單純分享就好。'}, product:productAdv}
+  ];
 }
 function materialTip(event){
   const map = {
@@ -1082,7 +1043,7 @@ let usedDay1BucketIdx = {daily:new Set(), emotion:new Set(), interactive:new Set
    這類低風險生活語言與「問觀眾」的互動句，但不能捏造使用者沒提供的具體事實
    （回購次數、他人反應、原因、感受評價、地點、時間長短等）。 */
 function isTopicMode(core){
-  return core.length>0 && core.length<=6 && !/[，,、。！]/.test(core);
+  return core.length>0 && core.length<=12 && !/[，,、。！]/.test(core);
 }
 const TOPIC_QUESTION_MAP = [
   {kw:['奶茶'], q:'你們喝奶茶會加珍珠嗎？'},
@@ -1091,42 +1052,42 @@ const TOPIC_QUESTION_MAP = [
   {kw:['早餐'], q:'早餐你們是鹹食派還是甜食派？'},
   {kw:['小孩','孩子'], q:'有人也覺得出門前準備最久嗎？😂'},
   {kw:['運動'], q:'你們運動完會直接吃東西嗎？'},
-  {kw:['上班','工作'], q:'你們上班最累的是哪個時段？'}
+  {kw:['上班','工作'], q:'你們上班最累的是哪個時段？'},
+  {kw:['煮飯','做飯','煮菜'], q:'你們家平常是誰比較常煮飯？'}
 ];
-const TOPIC_GENERIC_QUESTIONS = ['你們也會這樣嗎？','你們通常都怎麼安排？','有人也是這樣嗎？','你們是哪一派？'];
 function topicQuestion(topic){
   const hit = TOPIC_QUESTION_MAP.find(m=>m.kw.some(k=>topic.includes(k)));
   if(hit) return hit.q;
-  return TOPIC_GENERIC_QUESTIONS[Math.floor(Math.random()*TOPIC_GENERIC_QUESTIONS.length)];
+  // 找不到特定主題時，問題仍然要點名這件事本身，不要換成一句跟事件完全無關的通用問句
+  return `你們家平常這種事，通常是誰比較常做？`;
 }
-const TOPIC_DAILY_TEMPLATES = [
-  (topic)=> `今天的小確幸\n${topic}，然後繼續忙 🤍`,
-  (topic)=> `${topic}\n日常紀錄一下 😊`,
-  (topic)=> `今天先不講大道理\n就是想${topic} 🤍`,
-  (topic)=> `${topic}\n生活就是這些小事 😂`,
-  (topic)=> `先補充一下快樂\n${topic}`
-];
-const TOPIC_PERSONAL_TEMPLATES = [
-  (topic)=> `${topic}\n忙裡偷閒一下 🤍`,
-  (topic)=> `今天就是想${topic}\n沒有為什麼，單純想記錄 😊`,
-  (topic)=> `${topic}\n今天的日常，先這樣 🤍`,
-  (topic)=> `簡單記錄一下\n${topic}`,
-  (topic)=> `${topic}\n今天先這樣就好 😂`
-];
-const TOPIC_INTERACTIVE_TEMPLATES = [
-  (topic,q)=> `突然想${topic} 😂\n${q}`,
-  (topic,q)=> `${topic}\n${q}`,
-  (topic,q)=> `問一下～\n${q}`,
-  (topic,q)=> `${topic} 😂\n${q}`,
-  (topic,q)=> `今天${topic}\n${q}`
-];
-function buildTopicBuckets(topic){
-  const q = topicQuestion(topic);
+/* 8個真正結構不同的分享角度框架，每一個都比「主題+emoji」多一點「分享入口」，
+   但框架本身固定、安全，不會因為套用主題就自己生出情緒／收穫／結果／他人反應。
+   角色分工：①③是最低門檻可以直接貼，②⑤⑥⑦是稍微多一點觀察感（但講的是「分享」這件事本身或中性事實，不是對這個活動的心得），④⑧是互動／輕鬆延伸。 */
+function genericAngleGroup(hasFamily){
+  const callWord = hasFamily ? '媽媽們' : '妳們';
   return {
-    daily: TOPIC_DAILY_TEMPLATES.map((fn,i)=>({angle:'td'+i, text: fn(topic)})),
-    emotion: TOPIC_PERSONAL_TEMPLATES.map((fn,i)=>({angle:'tp'+i, text: fn(topic)})),
-    interactive: TOPIC_INTERACTIVE_TEMPLATES.map((fn,i)=>({angle:'ti'+i, text: fn(topic, q)}))
+    a1: topic => `今天的行程：${topic} 🤍`,
+    a2: topic => `${topic}。\n原來這種很普通的小行程，也可以是今天的一則。`,
+    a3: topic => `${topic}，也是今天的一部分 🤍`,
+    a4: topic => `${topic}～\n${callWord}今天都在忙什麼？`,
+    a5: topic => `${topic}。\n有些日子本來就是這樣，不用特別有什麼理由。`,
+    a6: topic => `今天做的其中一件事：${topic}。`,
+    a7: topic => `${topic}。\n偶爾也想單純記錄一下這種小事。`,
+    a8: topic => `${topic}。\n${callWord}也有這種很日常、沒什麼特別原因的時刻嗎？`
   };
+}
+let usedGenericAngles = new Set();
+function pickGenericAngles(topic, p, rawEvent){
+  const ANGLE_KEYS = ['a1','a2','a3','a4','a5','a6','a7','a8'];
+  const ic = p ? buildIdentityCtx(p) : {hasFamilyIdentity:false};
+  const angles = genericAngleGroup(ic.hasFamilyIdentity);
+  let available = ANGLE_KEYS.filter(k=>!usedGenericAngles.has(k));
+  if(available.length<3){ usedGenericAngles = new Set(); available = ANGLE_KEYS.slice(); }
+  const shuffled = available.slice().sort(()=>Math.random()-0.5);
+  const keys = shuffled.slice(0,3);
+  keys.forEach(k=>usedGenericAngles.add(k));
+  return keys.map(k=>({angle:'generic-'+k, text: angles[k](topic)}));
 }
 function drawOneFromBucket(bucketArr, bucketKey){
   const usedSet = usedDay1BucketIdx[bucketKey];
@@ -1140,7 +1101,7 @@ function drawOneFromBucket(bucketArr, bucketKey){
    提供事先設計好、彼此結構完全不同的三種分享方向。每個主題準備2組，
    「再換三個靈感」時優先切到還沒用過的那一組，確保不是同一句加減字。 */
 const TOPIC_MODULES = [
-  { id:'course', match:e=>/上課|課程|學習|學到/.test(e), sets:[
+  { id:'course', match:e=>/上課|課程|學習|學到/.test(e) && !/帶(小孩|孩子|家人)|陪(小孩|孩子|家人)/.test(e), sets:[
     { resonance:`做越久反而越會發現\n真的不是會了就不用再學\n\n今天上完課又有新的收穫\n有些東西真的要一直更新自己 🤍`,
       personal:`今天來上課\n有幾個地方真的很有感\n\n有時候不是不知道\n只是被提醒一下\n突然又更清楚了`,
       interactive:`今天上課又默默記了一堆 😂\n每次學新的東西\n都會發現自己還有好多可以進步\n\n你們最近有在學什麼嗎？` },
@@ -1168,21 +1129,21 @@ const TOPIC_MODULES = [
     { resonance:`上班的累有時候不是身體\n是腦袋一直被打斷的那種累 😂`,
       personal:`今天真的有點撐\n但也就這樣過完了\n\n先這樣，明天再說`,
       interactive:`今天上班累爆 😂\n\n你們累的時候\n是想講話還是只想安靜？` } ]},
-  { id:'hotpot', match:e=>/火鍋/.test(e), sets:[
+  { id:'hotpot', match:e=>/火鍋/.test(e) && /好吃|讚|滿足/.test(e), sets:[
     { resonance:`有時候吃到好吃的東西\n真的會忍不住想發一下 😂\n\n今天這鍋有可以`,
       personal:`今天沒有什麼大道理\n就是吃到一頓很好吃的火鍋 😂\n\n這種我就會想記一下`,
       interactive:`今天去吃火鍋\n真的好吃 🤍\n\n問一下～\n你們吃火鍋第一個一定點什麼？` },
     { resonance:`天冷不天冷都要吃火鍋\n這種快樂真的很簡單 😂`,
       personal:`今天吃火鍋吃得很滿足\n沒什麼特別原因\n\n就是好吃`,
       interactive:`今天火鍋吃起來 😂\n\n你們湯底都選什麼？` } ]},
-  { id:'skincare', match:e=>/洗卸|卸妝|洗臉/.test(e), sets:[
+  { id:'skincare', match:e=>/洗卸|卸妝|洗臉/.test(e) && /乾淨|舒服|清爽/.test(e), sets:[
     { resonance:`以前真的覺得\n洗臉不就是洗乾淨就好嗎 😂\n\n現在反而越來越在意\n洗完臉的那個感覺`,
       personal:`今天用了洗卸\n洗完那個乾淨感我真的喜歡 🤍\n\n有些東西不用講得多厲害\n自己用完喜歡最重要`,
       interactive:`今天用了洗卸\n洗完覺得很乾淨\n\n你們挑洗臉的東西\n最在意的是乾淨感還是洗完的膚感？` },
     { resonance:`洗臉這件事真的越來越講究 😂\n以前隨便洗洗，現在會在意洗完的感覺`,
       personal:`今天洗完臉\n就是覺得很乾淨、很舒服 🤍\n\n簡單但很實在`,
       interactive:`今天用洗卸洗完臉 😂\n\n你們洗臉會在意清潔力還是溫和度？` } ]},
-  { id:'customer_ask', match:e=>/客人/.test(e) && /問/.test(e), sets:[
+  { id:'customer_ask', match:e=>/客人|有人/.test(e) && /問/.test(e), sets:[
     { resonance:`做久了會發現\n有時候最開心的不是自己一直介紹\n\n是對方主動跑來問你：\n「欸，那個是什麼？」😂`,
       personal:`今天客人突然來問我產品\n\n那種「不是我主動講」\n而是對方自己有興趣的感覺\n真的滿不一樣的 🤍`,
       interactive:`今天突然有人問我產品 😂\n\n好奇問一下\n你們買一個新東西之前\n最想先知道的是效果、價格還是怎麼用？` },
@@ -1210,7 +1171,7 @@ const TOPIC_MODULES = [
     { resonance:`妝畫得順的那天\n心情真的會不一樣 😂\n\n忍不住多拍幾張`,
       personal:`今天照鏡子多看了幾眼\n\n單純就是今天狀態不錯 🤍`,
       interactive:`今天自拍拍得很開心 😂\n\n你們出門前會特別花時間化妝嗎？` } ]},
-  { id:'friends_meal', match:e=>/朋友/.test(e) && /吃飯|聊/.test(e), sets:[
+  { id:'friends_meal', match:e=>/朋友/.test(e) && /聊/.test(e), sets:[
     { resonance:`長大之後才發現\n可以坐下來好好吃頓飯、聊聊天\n其實就很難得了`,
       personal:`今天跟朋友吃飯\n不知不覺聊了好多\n\n有些話真的就是\n見面才會一直講 😂`,
       interactive:`今天跟朋友吃飯聊了好多 😂\n\n你們跟好朋友見面\n也是一坐下就可以聊幾個小時嗎？` },
@@ -1291,8 +1252,69 @@ function buildIdentityAngle(event, p){
   usedDay1Texts.add(text);
   return text;
 }
+/* 內容重點辨識層：辨識使用者輸入裡「轉折詞」跟「情緒詞」，這些字比事件本身更有分享價值，
+   絕對不能被通用模板洗掉。只偵測已經出現在輸入裡的字，不推論、不解釋「為什麼」。 */
+const TRANSITION_WORDS = ['終於','竟然','結果','原本','後來','第一次','還是','居然','沒想到','今天才發現','最近開始','突然','其實'];
+const CORE_EMOTION_WORDS = ['開心','很累','好累','感動','煩','喜歡','舒服','捨不得','緊張','很有感','笑死','傻眼'];
+function analyzeContentCore(event){
+  const clauses = (event||'').split(/[\s,，、。！\n]+/).map(s=>s.trim()).filter(Boolean);
+  let transitionWord = '', emotionWord = '';
+  const coreClauses = [];
+  clauses.forEach(c=>{
+    if(!transitionWord){
+      const tw = TRANSITION_WORDS.find(w=>c.includes(w));
+      if(tw){ transitionWord = tw; if(c===tw) return; }
+    }
+    if(!emotionWord){
+      const ew = CORE_EMOTION_WORDS.find(w=>c.includes(w));
+      if(ew){ emotionWord = ew; if(c===ew) return; }
+    }
+    coreClauses.push(c);
+  });
+  const core = coreClauses.join('，') || (event||'').trim();
+  return { transitionWord, emotionWord, core, hasSignal: !!(transitionWord||emotionWord) };
+}
+function buildCoreAngles(analysis){
+  const { core, transitionWord, emotionWord } = analysis;
+  const signal = transitionWord || emotionWord;
+  const emoji = transitionWord ? '🥹' : '🤍';
+  if(signal && core.includes(signal)){
+    // signal詞還留在core裡面（沒有被獨立成一句），不要重複講一次
+    return [
+      {key:'core1', text: `${core} ${emoji}`},
+      {key:'core2', text: `${core}\n這個我要記一下。`},
+      {key:'core3', text: `${core}\n也是今天很想記下來的一件事 🤍`}
+    ];
+  }
+  return [
+    {key:'core1', text: `${core}。\n${signal} ${emoji}`},
+    {key:'core2', text: `${core}${signal?'，'+signal:''}\n這個我要記一下。`},
+    {key:'core3', text: `${core}。\n${signal}，也是今天很想記下來的一件事 🤍`}
+  ];
+}
+/* 「這次妳可以學會什麼？」動態學習提醒，一次只教一個重點，語氣是陪伴式提醒不是上課 */
+function buildLearningTip(event, analysis){
+  if(analysis.transitionWord){
+    return `妳這次其實已經有內容了 🤍 重點不是事件本身，是妳自己寫的「${analysis.transitionWord}」。\n下次看到這種轉折字，就知道它很可能是這則的分享點。`;
+  }
+  if(analysis.emotionWord){
+    return `妳剛剛已經把感受寫出來了 🤍 「${analysis.emotionWord}」就是這則最值得放大的地方。\n下次可以試：發生什麼＋妳的感覺，這樣就能寫出一則了。`;
+  }
+  const core = cleanCore(event) || event || '';
+  if(core.length<=8){
+    return `不用每次都想很多 🤍\n一件小事＋一句感覺，就已經可以是一則了。`;
+  }
+  return `妳寫的細節已經很夠用了 🤍\n下次可以試：發生什麼＋一個具體細節，會比較有畫面。`;
+}
 function pickDay1Templates(event, p){
   const {feeling, trait, mainEvent} = parseMaterial(event);
+  const coreAnalysis = analyzeContentCore(event);
+  if(!trait && coreAnalysis.hasSignal){
+    // 資訊權重最高：使用者自己寫出轉折／情緒詞時，優先用這個，不讓通用模板蓋掉
+    const angles = buildCoreAngles(coreAnalysis);
+    angles.forEach(t=>usedDay1Texts.add(t.text));
+    return angles;
+  }
   if(trait){
     const pool = TRAIT_TEMPLATES.map((fn,i)=>({angle:'trait'+i, text: fn(trait, mainEvent)}));
     let available = pool.filter(t=>!usedDay1Texts.has(t.text));
@@ -1317,19 +1339,17 @@ function pickDay1Templates(event, p){
       {key:topicModule.id+'-identity', text: buildIdentityAngle(event, p)}
     ];
   }
+  const category = classifyEventCategory(event);
+  const core = cleanCore(event);
+  if(!feeling && category!=='emotion' && isTopicMode(core)){
+    // 主題模式：短短的主題，用8個真正結構不同的分享角度框架，而不是同一句話換emoji。
+    // 提早return，不走下面day1SetValid的「開頭字元必須不同」檢查——因為這8個角度刻意保留使用者原句開頭（避免腦補），
+    // 真正的差異保證是 usedGenericAngles 的角度追蹤，不是表面字元比對。
+    return pickGenericAngles(core, p, event).map(t=>({key:t.angle, text:t.text}));
+  }
   const draw = ()=>{
     if(feeling){
       const buckets = buildFeelingBuckets(event);
-      const d = drawOneFromBucket(buckets.daily, 'daily');
-      const e = drawOneFromBucket(buckets.emotion, 'emotion');
-      const i = drawOneFromBucket(buckets.interactive, 'interactive');
-      return { picked:[buckets.daily[d.i], buckets.emotion[e.i], buckets.interactive[i.i]], idx:{daily:d.i, emotion:e.i, interactive:i.i} };
-    }
-    const category = classifyEventCategory(event);
-    const core = cleanCore(event);
-    if(category!=='emotion' && isTopicMode(core)){
-      // 主題模式：短短的主題，主動設計3個分享切角，而不是原地打轉
-      const buckets = buildTopicBuckets(core);
       const d = drawOneFromBucket(buckets.daily, 'daily');
       const e = drawOneFromBucket(buckets.emotion, 'emotion');
       const i = drawOneFromBucket(buckets.interactive, 'interactive');
@@ -1429,14 +1449,22 @@ async function completeDay1AssistantTask(){
   }
 }
 
+/* 「下次妳也可以自己寫」教學卡：方法固定，但例子一律用使用者剛剛真實輸入的素材，不是固定用「煮飯」當例子 */
+function buildSelfWriteCard(event, analysis){
+  const core = analyzeContentCore(event).core || cleanCore(event) || event || '今天發生的事';
+  const feelLine = analysis.hasSignal
+    ? `${core}，${analysis.transitionWord||analysis.emotionWord}\n沒有感受就不要硬寫，真實比漂亮重要。`
+    : `（沒有特別感受也沒關係，不用硬寫）`;
+  return `其實妳剛剛已經有素材了。\n\n分享生活不用先想「我要寫什麼文案」，先抓3件事就好：\n\n① 發生什麼？\n今天真的發生的事情，例如「${core}」。\n\n② 我有什麼感覺或發現？\n有就寫，沒有也沒關係。\n\n③ 我想怎麼分享？\n只是記錄、想讓人有共鳴，還是想跟大家聊聊？\n\n最簡單的寫法：事情＋一句自己的話\n例如：「${core}。\n很普通，但就是今天的一部分 🤍」\n\n想增加互動：事情＋一個別人很好回答的問題\n例如：「${core} 🍳\n${topicQuestion(core)}」\n\n有感受的時候：事情＋真實感受\n${feelLine}\n\n先從自己的生活開始看，久了妳會慢慢發現：不是沒有內容，而是以前沒有把生活當成素材。🤍`;
+}
 let currentAngleResult = null;
 let expandedAngleKey = null;
 function renderThreeAngles(ctx, angles, tip){
-  currentAngleResult = {ctx, angles, tip};
+  currentAngleResult = {ctx, angles, tip, learningTip: buildSelfWriteCard(ctx.event, analyzeContentCore(ctx.event))};
   return renderThreeAnglesInner();
 }
 function renderThreeAnglesInner(){
-  const {ctx, angles, tip} = currentAngleResult;
+  const {ctx, angles, tip, learningTip} = currentAngleResult;
   const numerals = ['①','②','③'];
   return `
   ${ctx.expressionStyle?`<p class="small-note" style="margin-bottom:8px; padding:0 4px;">${ctx.expressionStyle}</p>`:''}
@@ -1450,6 +1478,11 @@ function renderThreeAnglesInner(){
       <div style="margin-bottom:14px; padding-bottom:14px; ${i<angles.length-1?'border-bottom:1px solid #F3EFE9;':''}">
         <p style="font-size:13px; font-weight:700; color:var(--pink); margin-bottom:6px;">${numerals[i]||'・'}${a.label?' '+a.label:''}</p>
         <p style="font-size:14px; line-height:1.9; color:var(--dark); white-space:pre-line; margin-bottom:8px;">${a.text}</p>
+        ${a.why?`
+        <details style="margin-bottom:8px;">
+          <summary style="font-size:12px; color:var(--gray); cursor:pointer;">為什麼這樣寫？</summary>
+          <p style="font-size:12.5px; line-height:1.8; color:var(--medium); margin-top:6px;">${a.why}</p>
+        </details>`:''}
         ${open?`
         <div style="background:var(--light-blue); border-radius:14px; padding:12px; font-size:12.5px; color:var(--medium); line-height:1.9;">
           <b>這則怎麼發</b><br>
@@ -1463,6 +1496,10 @@ function renderThreeAnglesInner(){
       </div>`;
     }).join('')}
     <button type="button" id="regenAngleBtn" class="btn btn-outline" onclick="regenerateAngles()" style="margin-top:4px;">🔄 再換三個靈感</button>
+  </div>
+  <div class="card" style="background:var(--light-sage); padding:14px 16px;">
+    <p style="font-size:12px; font-weight:700; color:#4d6a4e; margin-bottom:6px;">🌱 下次妳也可以自己寫</p>
+    <p style="font-size:12.5px; line-height:1.8; color:#4d6a4e; white-space:pre-line;">${learningTip}</p>
   </div>`;
 }
 function selectAngle(key){
@@ -1476,15 +1513,22 @@ function selectAngle(key){
 }
 function runContentAssistant(pid, event){
   console.log('[Assistant] generating for input:', event);
+  console.log('[Assistant Debug] generation input:', JSON.stringify(event));
+  console.log('[Assistant Debug] core analysis:', JSON.stringify(analyzeContentCore(event)));
   try{
     const p = getPartner(pid);
     assistantPendingEvent = event;
     const ctx = buildAssistantContext(p, event);
     const category = classifyEventCategory(event);
     if(isDay1(p)){
+      console.log('[Assistant Path] click handler: runAssistant');
+      console.log('[Assistant Path] generator: pickDay1Templates');
+      console.log('[Assistant Path] angle source: pickDay1Templates internal routing (analyzeContentCore / TOPIC_MODULES / pickGenericAngles) — not ANGLE_DEFS');
+      console.log('[Assistant Path] render function: renderThreeAngles');
       usedDay1Texts = new Set();
       usedDay1BucketIdx = {daily:new Set(), emotion:new Set(), interactive:new Set()};
       usedTopicSetIdx = {};
+      usedGenericAngles = new Set();
       const templates = pickDay1Templates(event, p);
       const angles = composeDay1AngleSet(templates);
       console.log('[Assistant] result ready (day1):', angles);
@@ -1512,6 +1556,10 @@ function runContentAssistant(pid, event){
       console.log('[Assistant] render complete');
       return;
     }
+    console.log('[Assistant Path] click handler: runAssistant');
+    console.log('[Assistant Path] generator: composeAngleSet');
+    console.log('[Assistant Path] angle source: composeAngleSet internal logic (analyzeContentCore + topicQuestion), not ANGLE_DEFS');
+    console.log('[Assistant Path] render function: renderThreeAngles');
     usedAngleKeys.clear();
     regenPass = 0;
     expandedAngleKey = null;
@@ -1570,9 +1618,9 @@ function regenerateAngles(){
 
 const CATEGORY_VARIANTS = {
   family: (event) => [
-    {label:'最自然', text:`${event}，媽媽生活的日常 😂`},
-    {label:'有共鳴', text:`以前的行程都是自己的，現在每天第一件事是${stripLeader(event)}，自己反而排在後面。`},
-    {label:'有互動', text:`有小孩之後，你們是先${stripLeader(event)}，還是先整理自己？😂`}
+    {label:'最自然', text:`${event}。\n很普通，但這就是今天 🤍`},
+    {label:'有共鳴', text:`${event}。\n每天好像都是這些小事拼起來的 😂`},
+    {label:'有互動', text:`${event}。\n妳們今天都在忙什麼？`}
   ],
   work: (event) => [
     {label:'最自然', text:`${event}，上班日常的一天。`},
@@ -1589,21 +1637,21 @@ const CATEGORY_VARIANTS = {
     {label:'有共鳴', text:`不是每個改變都要很大，${stripLeader(event)}，對現在的我來說已經算前進了。`},
     {label:'有互動', text:`你們最近有沒有什麼小小的、自己才知道的進步？`}
   ],
-  product: (event, restItems) => hasStoryDetail(event) ? [
+  product: (event) => [
     {label:'最自然', text:`${event}，用下來的感覺是……`},
     {label:'有共鳴', text:`一直很在意的地方，這次${stripLeader(event)}之後有感覺到一點差別。`},
     {label:'有互動', text:`你們平常都是怎麼處理這件事的？我最近試了一個新方法。`}
-  ] : buildNeutralTransactionVariants(event, restItems),
+  ],
   business_log: (event) => [
     {label:'最自然', text:`${event}，今天的一點小紀錄。`},
     {label:'有共鳴', text:`經營這件事，很多時候就是${stripLeader(event)}這種不起眼的累積。`},
     {label:'有互動', text:`你們今天也有做了什麼小小的經營行動嗎？`}
   ],
-  order: (event, restItems) => hasStoryDetail(event) ? [
+  order: (event) => [
     {label:'最自然', text:`${event}，今天的一個小紀錄。`},
     {label:'有共鳴', text:`能被這樣信任地下單，是經營裡很踏實的一件小事。`},
     {label:'有互動', text:`想問問大家，你們通常會一次準備幾份？`}
-  ] : buildNeutralTransactionVariants(event, restItems),
+  ],
   daily: (event) => [
     {label:'最自然', text:`${event}，很普通，但就是今天的一部分。`},
     {label:'有共鳴', text:`很多時候，日子就是由${stripLeader(event)}這種小事組成的，不用特別厲害。`},
@@ -1611,14 +1659,14 @@ const CATEGORY_VARIANTS = {
   ]
 };
 const CATEGORY_SCENE = {
-  family:'整理小孩、準備出門的自然畫面', work:'辦公室、通勤或工作中的畫面',
+  family:'今天實際發生當下可以拍到的畫面，或直接用文字限動也可以',
+  work:'辦公室、通勤或工作中的畫面',
   emotion:'一個安靜、放鬆的角落或自己的表情', product:'使用當下或使用後的畫面',
   growth:'你正在學習或嘗試的畫面', business_log:'今天經營相關的畫面',
   order:'訂單、包裝或產品組合的畫面（不用露出個資）',
   daily:'手邊正在做的事情或當下的畫面'
 };
 const CATEGORY_INTERACTION = {
-  family:'投票：「媽媽先整理小孩 🙋🏻‍♀️／我先整理自己」',
   work:'問大家：「你們上班也會這樣嗎？」',
   growth:'問大家：「你們最近有什麼小進步？」',
   business_log:'問大家：「你們今天做了什麼小小的經營行動？」'
@@ -1630,7 +1678,7 @@ const CATEGORY_REASON = {
   business_log:'這是跟經營有關的真實紀錄，比單純的生活小事更有累積價值。',
   work:'這件事跟你的日常身分有關，容易讓人有共鳴。',
   product:'這件事跟產品體驗有關，是自然累積信任的好素材。',
-  family:'這件事最貼近你的真實生活，容易讓有一樣身分的人有共鳴。',
+  family:'這是很真實的家庭日常，而且有具體畫面。對有類似生活的人來說，反而容易產生共鳴，不需要特別把它寫得很厲害。',
   growth:'這是一個屬於你自己的小小成長片刻，值得留下來。',
   emotion:'這件事最真實，容易被記住。',
   daily:'這件事雖然普通，但相對其他素材，還是比較適合拿來記錄的一件。'
@@ -1650,7 +1698,21 @@ function splitEventItems(text){
   if(parts.length<=1){
     parts = t.split(/[、,，;；]/).map(s=>s.trim()).filter(Boolean);
   }
-  return parts.length ? parts : [t];
+  return mergeTrailingSignalItems(parts.length ? parts : [t]);
+}
+/* 如果某一行單獨只是一個轉折/情緒詞（例如「終於」自己一行），不要把它當成獨立事件，
+   要接回「前一件事」，否則會變成一個沒有意義的第3個item，也會讓轉折詞找不到自己真正屬於哪件事。 */
+function mergeTrailingSignalItems(items){
+  const merged = [];
+  items.forEach(it=>{
+    const isBareSignal = TRANSITION_WORDS.includes(it) || CORE_EMOTION_WORDS.includes(it);
+    if(isBareSignal && merged.length){
+      merged[merged.length-1] = merged[merged.length-1] + '，' + it;
+    } else {
+      merged.push(it);
+    }
+  });
+  return merged;
 }
 const TRANSACTIONAL_CATEGORIES = ['order','product','customer'];
 function scoreEventItem(item, ctx){
@@ -1674,26 +1736,49 @@ function scoreEventItem(item, ctx){
 let assistantPendingTop = null;
 let assistantPendingRest = [];
 function generateMultiMaterialResult(p, items){
+  console.log('[Assistant Debug] raw input:', items.join('\n'));
   const ctx = buildAssistantContext(p, items.join('、'));
-  const scored = items.map(it=>scoreEventItem(it, ctx)).sort((a,b)=>b.score-a.score);
-  const top = scored[0];
-  const rest = scored.slice(1);
-  if(TRANSACTIONAL_CATEGORIES.includes(top.category) && !top.detailed){
+  const scored = items.map(it=>scoreEventItem(it, ctx));
+  console.log('[Assistant Debug] events:', scored.map((s,i)=>(i+1)+'. '+s.item));
+  console.log('[Assistant Debug] category per event:', scored.map((s,i)=>(i+1)+'. '+s.category));
+  const sorted = scored.slice().sort((a,b)=>b.score-a.score);
+  const top = sorted[0];
+  const topDetailed = top.detailed || sorted.slice(1).some(s=>hasStoryDetail(s.item));
+  if(TRANSACTIONAL_CATEGORIES.includes(top.category) && !topDetailed){
+    const rest = sorted.slice(1);
     assistantPendingTop = top;
     assistantPendingRest = rest.map(r=>r.item);
+    console.log('[Assistant Debug] common theme:', '(交易類，先補資訊)');
     return {kind:'needsInfo', top, restItems: assistantPendingRest};
   }
-  return buildMaterialResult(ctx, top, rest.map(r=>r.item), '');
+  // 跟 top 同一類別的其他事件，合併成同一個內容核心，而不是只挑一件、把其他丟到「其他素材」
+  const sameTheme = scored.filter(s=>s!==top && s.category===top.category);
+  const different = scored.filter(s=>s!==top && !sameTheme.includes(s));
+  console.log('[Assistant Debug] common theme:', sameTheme.length ? top.category : (different.length?'(多個不同方向)':'(單一事件)'));
+  const mergedItem = sameTheme.length
+    ? { item: [top.item, ...sameTheme.map(s=>s.item)].join('＋'), category: top.category, score: top.score, detailed: topDetailed || sameTheme.some(s=>s.detailed) }
+    : Object.assign({}, top, {detailed: topDetailed});
+  console.log('[Assistant Debug] content core:', mergedItem.item);
+  const result = buildMaterialResult(ctx, mergedItem, different.map(r=>r.item), '');
+  if(different.length){
+    // 類別真的不同，明確告訴她有不只一個可分享方向，不要硬併也不要默默丟掉
+    const otherLabel = { family:'家庭日常', work:'工作日常', emotion:'心情', growth:'成長', daily:'生活日常', business_log:'經營', product:'產品體驗' };
+    const dirs = Array.from(new Set([mergedItem.category, ...different.map(d=>d.category)])).map(c=>otherLabel[c]||c);
+    if(dirs.length>1) result.reason += `\n\n今天其實有${dirs.length}個方向可以分享：${dirs.join('＋')}，可以挑一個先發，另一個之後再說。`;
+  }
+  result.multiEventCount = 1 + sameTheme.length;
+  return result;
 }
 function buildMaterialResult(ctx, top, restItems, extraDetail){
   const eventText = extraDetail ? `${top.item}（${extraDetail}）` : top.item;
   const detailed = !!extraDetail || top.detailed;
-  const variants = detailed
-    ? (CATEGORY_VARIANTS[top.category]||CATEGORY_VARIANTS.daily)(eventText, restItems)
-    : buildNeutralTransactionVariants(top.item, restItems);
-  const reason = detailed
-    ? (CATEGORY_REASON[top.category]||CATEGORY_REASON.daily)
-    : (CATEGORY_REASON_NEUTRAL[top.category]||CATEGORY_REASON_NEUTRAL.product);
+  const isTransactional = TRANSACTIONAL_CATEGORIES.includes(top.category);
+  const variants = (isTransactional && !detailed)
+    ? buildNeutralTransactionVariants(top.item, restItems)
+    : (CATEGORY_VARIANTS[top.category]||CATEGORY_VARIANTS.daily)(eventText, restItems);
+  const reason = (isTransactional && !detailed)
+    ? (CATEGORY_REASON_NEUTRAL[top.category]||CATEGORY_REASON_NEUTRAL.product)
+    : (CATEGORY_REASON[top.category]||CATEGORY_REASON.daily);
   const worthwhile = it => !isLowSignalEvent(it);
   const B = restItems.filter(worthwhile);
   const C = restItems.filter(it=>!worthwhile(it));
@@ -1759,7 +1844,12 @@ function renderMultiMaterialResult(r){
     ${r.B.length?`<p style="font-size:13px; line-height:1.8; color:var(--medium); margin-bottom:6px;"><b>可以順手發：</b>${r.B.join('、')}（可以當簡單限動，不用寫成完整內容）</p>`:''}
     ${r.C.length?`<p style="font-size:13px; line-height:1.8; color:var(--medium);"><b>今天不用發：</b>${r.C.join('、')}（先留著，不用勉強今天都用上）</p>`:''}
     ${(!r.B.length && !r.C.length)?`<p class="small-note">今天先專心發這一則就好。</p>`:''}
-  </div>`;
+  </div>
+  ${r.multiEventCount>1?`
+  <div class="card" style="background:var(--light-sage); padding:14px 16px;">
+    <p style="font-size:12px; font-weight:700; color:#4d6a4e; margin-bottom:6px;">🌱 這次妳可以學會什麼？</p>
+    <p style="font-size:12.5px; line-height:1.8; color:#4d6a4e; white-space:pre-line;">妳今天其實不是只有一個素材。\n把今天做的${r.multiEventCount}件小事放在一起，就是一則很完整的日常。\n\n下次可以試著想：今天做了哪2～3件小事？不用每件都很特別，放在一起就有生活感了 🤍</p>
+  </div>`:''}`;
 }
 
 function renderAssistantResult(r){
@@ -1953,15 +2043,17 @@ const POOL_BUILDERS = {
     {theme:'這30天的回顧', why:'回顧能讓這段努力被自己看見。', base:'寫下這段時間你最想記住的一個改變。'}
   ],
   // ── 定位期 ──
-  positioning: c => [
-    {theme:'寫下你的定位句', why:'讓別人一眼看懂你是誰、在分享什麼。', base:'把你的個人定位句子放進一則自我介紹貼文或限動。'},
+  positioning: c => {
+    const examples = buildPositioningExamples(c).map(e=>`・${e}`).join('<br>');
+    return [
+    {theme:'寫一句話介紹自己', why:'讓別人一眼看懂你是誰、在分享什麼。', base:`用一句話讓大家知道「妳是誰＋平常會分享什麼」。<br><br>不知道怎麼寫？可以參考：<br>${examples}<br><br>不用寫得很專業，像平常介紹自己一樣就好 🤍`},
     {theme:c.topics[0], why:'從你自然會分享的內容開始，最不費力也最真實。', base:`分享一則關於「${c.topics[0]}」的內容。`},
     {theme:'你是誰的自我介紹', why:'讓新朋友第一眼就記住你。', base:'發一則簡單的自我介紹，說說你是誰、平常分享什麼。'},
     {theme:c.topics[1], why:'持續讓大家看到真實的你。', base:`分享一則關於「${c.topics[1]}」的內容。`},
     {theme:`一個只有${c.lifeRoleLabel}才懂的瞬間`, why:'你的生活角色，就是別人記住你的線索之一。', base:`分享一個只有${c.lifeRoleLabel}才懂的小瞬間。`},
     {theme:'最近喜歡的東西', why:'喜好也是個人特色的一部分。', base:'分享一個最近喜歡的食物、穿搭、用品或地方。'},
     {theme:'這週小結', why:'給自己一點肯定，累積比完美更重要。', base:'寫下一句這週你對自己最想說的鼓勵。'}
-  ],
+  ];},
   pillars: c => [
     {theme:c.pillars[0].name, why:c.pillars[0].line, base:`發一則跟「${c.pillars[0].name}」有關的內容，例如：${pex(c.pillars[0],0)}`},
     {theme:c.pillars[1].name, why:c.pillars[1].line, base:`發一則跟「${c.pillars[1].name}」有關的內容，例如：${pex(c.pillars[1],0)}`},
@@ -2142,7 +2234,7 @@ const CHANGE_GOAL_IDEAS = {
   '提升跟進與成交': '分享一個小小的成果或見證，附上一句邀請',
   '建立客戶回訪習慣': '花 5 分鐘，把最近有互動的人整理成一份小名單',
   '穩定分享': '不用想太多，先發一句話也算完成',
-  '找到自己的定位': '重新讀一次你的個人定位句，想想今天怎麼呼應它',
+  '找到自己的定位': '重新想一下「妳是誰＋平常會分享什麼」，想想今天怎麼呼應它',
   '找回經營動力': '先做一件最輕鬆、完全不費力的小事就好'
 };
 const NEED_IDEAS = {
@@ -2153,7 +2245,7 @@ const NEED_IDEAS = {
   '學會開口跟進': '挑一位曾經聊過的人，主動關心她的近況',
   '提升成交能力': '練習在對話最後，自然地提出一個下一步的小邀請',
   '建立穩定經營習慣': '不用想太多，先發一句話也算完成',
-  '重新找到自己的方向': '重新讀一次你的個人定位句，想想今天怎麼呼應它'
+  '重新找到自己的方向': '重新想一下「妳是誰＋平常會分享什麼」，想想今天怎麼呼應它'
 };
 const NEED_DISPLAY_LABEL = {
   '找回經營動力': '重新找回經營動力',
@@ -2176,9 +2268,57 @@ const NEED_FOCUS_ACTION = {
   '重新找到自己的方向': '重新找到自己的方向'
 };
 
+/* 主題 → 具體例子的對照表，之後要新增主題只要在這裡加一行即可，不用改render邏輯。
+   找不到完全相符的主題時，用 TOPIC_EXAMPLES_FALLBACK 這組通用生活例子，不會空白也不會報錯。 */
+const TOPIC_EXAMPLES = {
+  '旅遊': ['最近最想去的一個地方','上次旅行最難忘的一件事','旅行時一定會帶的東西'],
+  '夫妻生活': ['最近跟另一半發生的好笑小事','兩個人平常最常一起做的事','相處久了才發現的小習慣'],
+  '日常生活': ['今天吃了什麼、去了哪裡','今天發生的一件小事','最近讓自己開心或很有感的一件事'],
+  '育兒': ['小孩今天說的一句話或做的一件事','育兒中一個讓妳會心一笑的瞬間','妳自己的育兒小撇步'],
+  '保養': ['最近在用、覺得不錯的保養習慣','保養前後讓妳有感的地方','妳的保養小堅持'],
+  '上班生活': ['今天工作上遇到的一件小事','上班途中的一個小觀察','下班後讓自己放鬆的方式'],
+  '健康管理': ['最近在做的一個健康小習慣','讓妳覺得有感的身體變化','妳堅持健康管理的小方法'],
+  '產品使用': ['第一次用這個產品的感覺','使用後最有感的一個地方','妳會怎麼跟朋友介紹這個產品'],
+  '美食': ['最近吃到印象深刻的一餐','自己做過最有成就感的一道料理','最近很想再吃一次的東西'],
+  '學習成長': ['最近學到的一個新東西','學習過程中的一個小發現','讓妳想繼續學下去的原因'],
+  '工作': ['今天工作上完成的一件事','工作中一個小小的成就感','一個讓妳印象深刻的工作瞬間'],
+  '家庭生活': ['今天家裡發生的一件小事','家人之間的一個小習慣','最近讓妳覺得溫暖的家庭時刻']
+};
+const TOPIC_EXAMPLES_FALLBACK = ['今天發生的一件小事','最近讓妳有感覺的一個瞬間','妳今天想到的一個小想法'];
+function topicExampleLines(topic){
+  return (TOPIC_EXAMPLES[topic] || TOPIC_EXAMPLES_FALLBACK).slice(0,3);
+}
+/* 「定位句」新手範例：優先用她自己的職業／生活角色／分享主題組句，資料不夠才用通用範例，
+   不會所有人都看到同一組固定範例。 */
+function buildPositioningExamples(c){
+  const role = (c.lifeRoleLabel && c.lifeRoleLabel!=='你') ? c.lifeRoleLabel : '';
+  const job = (c.job && c.job!=='你熟悉的領域') ? c.job : '';
+  const identity = role || job || '';
+  const topics = (c.sharingList && c.sharingList.length ? c.sharingList : (c.topics||[])).filter(Boolean).slice(0,2);
+  const examples = [];
+  if(identity && topics.length){
+    examples.push(`我是${identity}，平常會分享${topics.join('、')}。`);
+  } else if(identity){
+    examples.push(`我是${identity}，這裡會記錄我的生活、改變跟實際心得。`);
+  }
+  if(job && identity!==job && topics[0]){
+    examples.push(`我是${job}，這裡會記錄${topics[0]}、生活跟我的日常。`);
+  }
+  const generic = [
+    '我是上班族媽媽，平常會分享育兒、生活跟保養日常。',
+    '我是愛旅行的上班族，這裡會記錄旅行、美食跟我的生活。',
+    '我正在學習經營自己，會分享我的改變、生活跟實際使用心得。'
+  ];
+  let final = Array.from(new Set(examples.filter(Boolean)));
+  for(const g of generic){ if(final.length>=3) break; if(!final.includes(g)) final.push(g); }
+  return final.slice(0,3);
+}
 function buildIdeaCandidates(ctx){
   const list = [];
-  (ctx.sharingList.length?ctx.sharingList:['日常生活']).forEach(s=> list.push(`挑一件今天跟「${s}」有關的小事，簡單分享一下`));
+  (ctx.sharingList.length?ctx.sharingList:['日常生活']).forEach(s=>{
+    const ex = topicExampleLines(s).map(e=>`　・${e}`).join('<br>');
+    list.push(`【${s}】挑一件今天跟這個有關的小事，簡單分享一下：<br>${ex}`);
+  });
   ctx.pillars.forEach(pl=> (pl.examples||[]).forEach(e=> list.push(e)));
   if(ctx.story) list.push(`聊聊「${ctx.story.slice(0,20)}」這段故事的一部分`);
   list.push(`寫一句話，說給${ctx.audience}聽`);
@@ -2297,7 +2437,7 @@ function render(){
     case 'settings': html = viewSettings(); break;
     case 'new': html = viewWizard(null); break;
     case 'edit': html = viewWizard(parts[1]); break;
-    case 'partner': html = viewPartnerHub(parts[1], parts[2]); break;
+    case 'partner': html = viewPartnerHub(parts[1], parts[2], parts[3]); break;
     default: {
       const p = myPartner();
       html = (p && p.plan) ? viewPartnerHub(p.id, 'today') : viewWelcome();
@@ -2328,6 +2468,10 @@ function topbar(title, sub, showBack){
     </div>
   </div>`;
 }
+/* 低調的製作者署名，所有主要頁面共用同一份，不重複寫。純文字、不加框、不加卡片，字級跟顏色都比內容淡。 */
+function brandFooter(){
+  return `<p style="text-align:center; font-size:11px; color:var(--gray); margin:26px 0 10px; line-height:1.6;">仙女團隊專屬經營資源 · 由巧穎設計開發 🤍</p>`;
+}
 
 /* ===================== 歡迎頁（個人首頁） ===================== */
 function viewWelcome(){
@@ -2335,7 +2479,7 @@ function viewWelcome(){
   const started = !!p;
   const label = started ? '繼續我的經營導航' : '重新找回經營動力';
   const target = started ? `#/edit/${p.id}` : '#/new';
-  return topbar('重新找回動力','') + `
+  return topbar('仙女團隊｜經營重啟導航','仙女團隊專屬經營資源') + `
   <div class="container" style="padding-top:10px;">
     <div class="hero-card">
       <div class="hero-eyebrow">歡迎</div>
@@ -2345,6 +2489,7 @@ function viewWelcome(){
     <div class="card">
       <button class="btn btn-primary" onclick="go('${target}')">${label}</button>
     </div>
+    ${brandFooter()}
   </div>`;
 }
 
@@ -2381,6 +2526,7 @@ function viewSettings(){
       <div class="section-label">關於</div>
       <p class="small-note">仙女團隊｜經營重啟導航　v1.0<br>幫助你看懂自己目前的經營狀態、找到卡點與定位，重新找回自己的方向與節奏。30天功能是可以隨時使用的輔助工具，不是必須完成的挑戰。</p>
     </div>
+    ${brandFooter()}
   </div>`;
 }
 
@@ -2515,6 +2661,11 @@ function stepBasic(d){
     <div class="field">
       <label>夥伴暱稱</label>
       <input type="text" id="f_nickname" value="${d.nickname}" placeholder="例如：小雨">
+    </div>
+    <div class="field">
+      <label>妳想從哪一天開始 30 天導航？</label>
+      <input type="date" id="f_startDate" value="${d.startDate}">
+      <p class="small-note" style="margin-top:4px;">這一天就是 Day 1，之後依序往下算，預設是今天。</p>
     </div>
     <div class="field">
       <label>你目前的工作／生活狀態（可複選）</label>
@@ -2838,6 +2989,8 @@ function saveWizardStepInputs(step){
   const multi = readMultiGroups(app);
   if(step===1){
     d.nickname = val('f_nickname') || d.nickname;
+    const inputDate = val('f_startDate');
+    if(inputDate && /^\d{4}-\d{2}-\d{2}$/.test(inputDate)) d.startDate = inputDate;
     d.profile.jobList = multi.job || d.profile.jobList;
     d.profile.jobOther = val('f_jobOther');
     d.profile.job = resolveOthers(d.profile.jobList, d.profile.jobOther).join('、');
@@ -2922,9 +3075,9 @@ async function wizardFinish(){
 }
 
 /* ===================== 個人主頁（含分頁） ===================== */
-function viewPartnerHub(id, tab){
+function viewPartnerHub(id, tab, extra){
   const p = getPartner(id);
-  if(!p) return topbar('我的經營導航','',true) + `<div class="container"><div class="empty-state"><p>找不到這筆資料</p><button class="btn btn-primary" onclick="go('#/welcome')">回首頁</button></div></div>`;
+  if(!p) return topbar('仙女團隊｜經營重啟導航','',true) + `<div class="container"><div class="empty-state"><p>找不到這筆資料</p><button class="btn btn-primary" onclick="go('#/welcome')">回首頁</button></div></div>`;
   tab = tab || 'today';
   const tabs = [
     {k:'today', label:'今日導航'},
@@ -2935,7 +3088,18 @@ function viewPartnerHub(id, tab){
     {k:'retro', label:'每週回顧'}
   ];
   let body = '';
-  if(tab==='today') body = tabToday(p);
+  if(tab==='today'){
+    // 補填過去的 Day：網址可以帶一個 day 數字（例如 #/partner/id/today/2），只允許查看「今天或更早」，不能提前看未來
+    let viewDate = null;
+    if(extra){
+      const n = parseInt(extra, 10);
+      const currentDn = dayNumber(p.startDate);
+      if(Number.isFinite(n) && n>=1 && n<=currentDn){
+        viewDate = dateOfDay(p.startDate, n);
+      }
+    }
+    body = tabToday(p, viewDate);
+  }
   else if(tab==='direction') body = tabDirection(p);
   else if(tab==='assistant') body = tabAssistant(p);
   else if(tab==='content30') body = tabContent30(p);
@@ -2943,12 +3107,13 @@ function viewPartnerHub(id, tab){
   else if(tab==='retro') body = tabRetro(p);
   else body = tabToday(p);
 
-  return topbar('我的經營導航', p.healthCheck?p.healthCheck.stage:'', true) + `
+  return topbar('仙女團隊｜經營重啟導航', p.healthCheck?p.healthCheck.stage:'', true) + `
   <div class="container">
     <div class="tab-row">
       ${tabs.map(t=>`<button class="tab-btn ${tab===t.k?'active':''}" onclick="go('#/partner/${id}/${t.k}')">${t.label}</button>`).join('')}
     </div>
     ${body}
+    ${brandFooter()}
   </div>`;
 }
 
@@ -3261,9 +3426,10 @@ function renderCompanionSection(p, date){
   </div>`;
 }
 
-function tabToday(p){
-  const dn = dayNumber(p.startDate);
-  const date = todayStr();
+function tabToday(p, viewDate){
+  const isPastView = !!(viewDate && viewDate!==todayStr());
+  const date = viewDate || todayStr();
+  const dn = isPastView ? dayIndexForDate(p.startDate, date) : dayNumber(p.startDate);
   const stage = p.healthCheck ? p.healthCheck.stage : '建立期';
   const planDay = (p.plan && p.plan.flat) ? p.plan.flat[Math.min(dn,30)-1] : null;
   const adj = (p.weekAdjustments && planDay) ? p.weekAdjustments[planDay.week] : null;
@@ -3320,6 +3486,12 @@ function tabToday(p){
 
   const displayName = partnerDisplayName(p);
   return `
+  ${isPastView?`
+  <div class="card" style="background:var(--light-pink); text-align:center;">
+    <p style="font-size:15px; font-weight:700; color:var(--pink);">正在補填｜Day ${dn}｜${fmtDate(date)}</p>
+    <p class="small-note" style="margin-top:4px;">這不是今天，補上的紀錄會存到這一天，不會蓋掉今天的內容。</p>
+    <button type="button" class="btn btn-outline btn-sm" style="margin-top:8px;" onclick="go('#/partner/${p.id}/today')">回到今天</button>
+  </div>`:''}
   ${showWelcomeBack?`
   <div class="card" style="background:var(--light-sage);">
     <p style="font-size:14.5px; font-weight:700; color:#4d6a4e; line-height:1.7;">${displayName}，歡迎回來 🤍</p>
@@ -3343,6 +3515,7 @@ function tabToday(p){
     <div class="section-label">② 不知道怎麼做？</div>
     <p class="small-note" style="margin-bottom:8px;">今天這一件事，你可以從這些題材裡面挑一個：</p>
     ${topicOptions.map(idea=>`<p style="font-size:13.5px; line-height:1.8; color:var(--medium); padding:2px 0;">・${idea}</p>`).join('')}
+    <p class="small-note" style="margin-top:6px;">不用全部分享，挑一個今天最有感覺的就好。</p>
   </div>`:''}
 
   ${bonusAction?`
@@ -3568,6 +3741,7 @@ function runAssistant(pid){
     const p = getPartner(pid);
     const ta = document.getElementById('assistantInput');
     const text = ta ? ta.value.trim() : '';
+    console.log('[Assistant Debug] UI value:', JSON.stringify(text));
     if(!text){ showToast('先簡單寫下今天發生的事，或點選下面的快速選項'); return; }
     assistantPendingEvent = text;
     if(isDay1(p)){
@@ -3596,14 +3770,15 @@ function runAssistant(pid){
 function renderFollowUpPrompt(){
   return `
   <div class="card">
-    <p style="font-size:14px; font-weight:700; margin-bottom:6px;">可以呀 😂 但我想幫你變得更像你。</p>
-    <p class="small-note" style="margin-bottom:12px;">今天這件事，有沒有一個特別的感覺？</p>
+    <p style="font-size:14px; font-weight:700; margin-bottom:6px;">這件事可以發，但如果多一點細節，我可以幫妳找到更像妳的角度。</p>
+    <p class="small-note" style="margin-bottom:12px;">這件事有沒有哪個地方讓妳特別有感？</p>
     <div class="filter-row">
-      <button type="button" class="filter-chip" data-followup="daily">只是日常</button>
-      <button type="button" class="filter-chip" data-followup="skin">最近皮膚有感</button>
-      <button type="button" class="filter-chip" data-followup="product">有使用產品</button>
-      <button type="button" class="filter-chip" data-followup="tired">今天真的很累</button>
-      <button type="button" class="filter-chip" data-followup="direct">直接幫我想就好</button>
+      <button type="button" class="filter-chip" data-followup="daily">沒有，就只是今天的日常</button>
+      <button type="button" class="filter-chip" data-followup="funny">有點好笑</button>
+      <button type="button" class="filter-chip" data-followup="happy">有點開心</button>
+      <button type="button" class="filter-chip" data-followup="tired">有點累</button>
+      <button type="button" class="filter-chip" data-followup="episode">有個小插曲</button>
+      <button type="button" class="filter-chip" data-followup="write">我自己寫</button>
     </div>
   </div>`;
 }
@@ -3620,7 +3795,16 @@ function pickFollowUp(tag){
       console.log('[Assistant] render complete');
       return;
     }
+    if(tag==='write'){
+      document.getElementById('assistantResult').innerHTML = `<p class="small-note" style="padding:4px;">好，那再多寫一點吧，我等妳 🤍</p>`;
+      const ta = document.getElementById('assistantInput');
+      if(ta && ta.focus) ta.focus();
+      return;
+    }
     if(tag==='tired') event = event + '，覺得有點累';
+    if(tag==='funny') event = event + '，有點好笑';
+    if(tag==='happy') event = event + '，有點開心';
+    if(tag==='episode') event = event + '，有個小插曲';
     runContentAssistant(p.id, event);
   }catch(err){
     console.error('[Assistant Generation Error]', err);
@@ -3649,7 +3833,8 @@ function tabContent30(p){
       ${Array.from({length:30},(_,i)=>i+1).map(n=>{
         const key = dateOfDay(p.startDate, n);
         const done = dayVisited(p.daily[key]);
-        return `<div class="day-chip ${n===dn?'today':''} ${done?'done':''}">${n}</div>`;
+        const clickable = n<=dn;
+        return `<div class="day-chip ${n===dn?'today':''} ${done?'done':''}" ${clickable?`onclick="go('#/partner/${p.id}/today/${n}')" style="cursor:pointer;"`:''}>${n}</div>`;
       }).join('')}
     </div>
   </div>
@@ -3702,6 +3887,7 @@ function tabCheckin(p){
           ${planDay?`今天的導航主題：${planDay.theme}<br>`:''}
           今天做了什麼：${noted?'有回來看看，留下了一點紀錄':'這天沒有留下紀錄，也沒關係'}
           ${rec.note?`<br>我的一句話：「${rec.note}」`:''}
+          <br><button type="button" class="btn btn-outline btn-sm" style="margin-top:8px;" onclick="go('#/partner/${p.id}/today/${dayIdx}')">查看／補填這天</button>
         </div>
       </details>`;
     }).join('')}
