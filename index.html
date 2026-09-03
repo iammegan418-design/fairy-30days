@@ -243,6 +243,13 @@ function normalizePlanRecord(plan){
   if(!Array.isArray(plan.flat)) plan.flat = [];
   return plan;
 }
+/* 偵測「第2週跟第1週內容逐天重複」這個特定舊版bug的訊號：Day1與Day8的主題+行動文字完全相同。
+   這個組合在正常產生的計畫裡幾乎不可能巧合發生，用來安全辨識受影響的舊資料，不會誤判正常計畫。 */
+function planHasDuplicateWeekBug(plan){
+  if(!plan || !Array.isArray(plan.flat) || plan.flat.length<14) return false;
+  const d1 = plan.flat[0], d8 = plan.flat[7];
+  return !!(d1 && d8 && d1.theme && d1.theme===d8.theme && d1.action===d8.action);
+}
 function normalizePartnerRecord(p){
   if(!p) return p;
   if(!p.daily || typeof p.daily!=='object') p.daily = {};
@@ -250,7 +257,14 @@ function normalizePartnerRecord(p){
   if(!p.weekAdjustments || typeof p.weekAdjustments!=='object') p.weekAdjustments = {};
   if(p.positioning) normalizePositioning(p.positioning);
   if(p.healthCheck) normalizeHealthCheck(p.healthCheck);
-  if(p.plan) normalizePlanRecord(p.plan);
+  if(p.plan){
+    normalizePlanRecord(p.plan);
+    // 舊資料曾經受過「第2週複製第1週」這個bug影響，這裡自動修正成正確的30天計畫，
+    // 只換掉 plan 本身，daily／weeklyRetros／weekAdjustments／健檢／定位等其他既有資料完全不動。
+    if(p.healthCheck && planHasDuplicateWeekBug(p.plan)){
+      p.plan = generate30DayPlan(p);
+    }
+  }
   return p;
 }
 function getPartner(id){ return normalizePartnerRecord(state.partners.find(p=>p.id===id)); }
@@ -2233,6 +2247,16 @@ function pickWeekKinds(stage, weakest){
   if(weakest.includes('inquiry') && stage!=='成長期') kinds[2]='trust';
   if(weakest.includes('closing')) kinds[2]='chat';
   if(weakest.includes('followUp')) kinds[3]='followup';
+  // 上面幾條規則可能同時命中，讓相鄰兩週被指定到同一個內容庫（例如同時符合content跟positioning時，
+  // 第1週跟第2週都會被設成'positioning'）。相鄰週用同一份內容庫，會導致該週從第一天重新取值，
+  // 跟前一週逐天重複。這裡強制相鄰週不能用同一個內容庫，撞到就換一個還沒用過的庫。
+  const ALT_POOL = ['adjust','getknown','pillars','trust','chat','interact','followup','fixedvisit','optimize','sorteffective','amplify','positioning'];
+  for(let i=1;i<kinds.length;i++){
+    if(kinds[i]===kinds[i-1]){
+      const alt = ALT_POOL.find(k=>k!==kinds[i-1] && !kinds.includes(k));
+      if(alt) kinds[i]=alt;
+    }
+  }
   return kinds;
 }
 
@@ -2375,7 +2399,7 @@ function generate30DayPlan(p){
     const pool = (POOL_BUILDERS[kinds[idx]] || POOL_BUILDERS['adjust'])(ctx);
     const days = [];
     for(let day=range[0]; day<=range[1]; day++){
-      const item = pool[(day-range[0]) % pool.length];
+      const item = pool[(day-1) % pool.length];
       const entry = {day, week:slot.no, weekTitle:slot.title, theme:item.theme, why:item.why, action:scaleAction(item.base, level), ideas: dailyIdeas(candidates, day)};
       days.push(entry);
       flat.push(entry);
